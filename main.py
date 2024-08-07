@@ -6,12 +6,16 @@ from urllib.parse import urljoin
 import urllib3
 from pymongo import MongoClient
 from deep_translator import GoogleTranslator
+from deep_translator.exceptions import RequestError
 from telegram import Bot
-from telegram.constants import PollType
+from telegram.constants import PollType, ParseMode
 from telegram.error import TelegramError
 from datetime import datetime
 import os
 import pytz
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+import threading
+import time
 
 # Disable SSL/TLS-related warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -30,11 +34,17 @@ class GoogleTranslatorWrapper:
         self.translator = GoogleTranslator(source="auto", target="gu")
 
     def translate(self, text):
-        try:
-            return self.translator.translate(text)
-        except Exception as e:
-            logger.error(f"Translation error: {e}")
-            return text
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                return self.translator.translate(text)
+            except RequestError as e:
+                logger.error(f"Translation error (attempt {attempt + 1}): {e}")
+                time.sleep(2)  # Wait before retrying
+            except Exception as e:
+                logger.error(f"Unexpected error in translation (attempt {attempt + 1}): {e}")
+                time.sleep(2)  # Wait before retrying
+        return text  # Return original text if all attempts fail
 
 class MongoDBManager:
     def __init__(self):
@@ -191,5 +201,17 @@ async def main():
     else:
         logger.info("No new questions found.")
 
+def run_server():
+    httpd = HTTPServer(('', 8080), SimpleHTTPRequestHandler)
+    httpd.serve_forever()
+
 if __name__ == "__main__":
+    # Start the web server in a separate thread
+    server_thread = threading.Thread(target=run_server)
+    server_thread.start()
+
+    # Run the main scraping function
     asyncio.run(main())
+
+    # Keep the script running
+    server_thread.join()
